@@ -26,7 +26,7 @@ jobs:
 
     - name: Build Windows executable
       run: |
-        pyinstaller --onefile --windowed --name "WizNote导出工具" wiz_export.py
+        pyinstaller --onefile --name "WizNote导出工具" wiz_export.py
 
     - name: Create release package
       shell: pwsh

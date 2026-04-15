@@ -601,7 +601,7 @@ def check_license():
         print()
         print("本工具需要解锁后才能使用。")
         print()
-        print("请联系我获取解锁码（重置码）：")
+        print("请联系我获取解锁码：")
         print()
         print("  QQ: 843115404")
         print()
@@ -609,14 +609,18 @@ def check_license():
         print(f"您的机器码: {machine_code}")
         print("-" * 60)
         print()
-        print("请复制以上机器码发送给我，我会为您生成解锁码。")
+        print("提示: 选中上面的机器码，按 Enter 键即可复制")
+        print()
+        print("请复制机器码发送给我，我会为您生成解锁码。")
         print("=" * 60)
         print()
 
-        # 询问是否有重置码
-        has_code = input("是否有解锁码? (y/n): ").strip().lower()
-        if has_code == 'y':
-            reset_code = input("请输入解锁码: ").strip()
+        # 循环直到解锁成功或用户退出
+        while True:
+            reset_code = input("请输入解锁码 (或按 Ctrl+C 退出): ").strip()
+            if not reset_code:
+                continue
+
             if manager.reset_with_code(reset_code):
                 print("\n✓ 解锁成功！")
                 # 重新检查授权
@@ -626,8 +630,7 @@ def check_license():
                     return True, remaining
             else:
                 print("\n✗ 解锁码无效，请检查输入是否正确。")
-
-        return False, 0
+                print("请重新输入或联系 QQ: 843115404\n")
 
     return True, remaining
 
@@ -646,9 +649,14 @@ def consume_license():
 
 def main():
     # 首先检查授权
-    license_ok, remaining = check_license()
+    try:
+        license_ok, remaining = check_license()
+    except KeyboardInterrupt:
+        print("\n\n已取消操作，程序退出。")
+        sys.exit(0)
+
     if not license_ok:
-        input("\n按回车键退出...")
+        print("\n授权检查失败，程序退出。")
         sys.exit(0)
 
     # 创建日志目录

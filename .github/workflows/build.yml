@@ -29,16 +29,40 @@ jobs:
         pyinstaller --onefile --windowed --name "WizNote导出工具" wiz_export.py
 
     - name: Create release package
+      shell: pwsh
       run: |
-        mkdir -p release/WizNote导出工具-Windows
-        cp dist/WizNote导出工具.exe release/WizNote导出工具-Windows/
-        echo "WizNote 为知笔记导出工具 - Windows 版本" > release/WizNote导出工具-Windows/使用说明.txt
-        echo "===============================================" >> release/WizNote导出工具-Windows/使用说明.txt
-        echo "" >> release/WizNote导出工具-Windows/使用说明.txt
-        echo "【系统要求】" >> release/WizNote导出工具-Windows/使用说明.txt
-        echo "- Windows 10/11 64位" >> release/WizNote导出工具-Windows/使用说明.txt
-        echo "- 无需安装 Python，已打包为独立应用" >> release/WizNote导出工具-Windows/使用说明.txt
-        cd release && zip -r WizNote导出工具-Windows.zip WizNote导出工具-Windows/
+        New-Item -ItemType Directory -Force -Path release/WizNote导出工具-Windows
+        Copy-Item dist/WizNote导出工具.exe release/WizNote导出工具-Windows/
+        @"
+        WizNote 为知笔记导出工具 - Windows 版本
+        ===============================================
+
+        【系统要求】
+        - Windows 10/11 64位
+        - 无需安装 Python，已打包为独立应用
+
+        【使用方法】
+        1. 双击运行 WizNote导出工具.exe
+        2. 按提示输入用户名和导出目录
+
+        【导出路径示例】
+        - /           - 导出全部笔记
+        - /My Journals - 只导出日记
+        - /工作/项目   - 只导出特定目录
+
+        【输出文件】
+        导出完成后会在当前目录生成 wiz/ 目录（Markdown文件）
+        和 wiz/media/ 目录（图片附件）
+
+        【导入 Obsidian】
+        1. 打开 Obsidian
+        2. 将 wiz/ 文件夹复制到 Obsidian 仓库
+        3. 图片会自动显示
+
+        【注意事项】
+        - 如果杀毒软件提示风险，请添加到白名单
+        "@ | Out-File -Encoding UTF8 release/WizNote导出工具-Windows/使用说明.txt
+        Compress-Archive -Path release/WizNote导出工具-Windows/* -DestinationPath release/WizNote导出工具-Windows.zip
 
     - name: Upload Windows artifact
       uses: actions/upload-artifact@v4

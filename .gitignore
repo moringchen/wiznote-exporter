@@ -54,3 +54,10 @@ specs/
 
 # GitHub Actions will build these
 !/.github/
+
+# License system - 私钥文件不要提交
+private_key.txt
+.claude/
+wizlog/
+main
+

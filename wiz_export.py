@@ -10,18 +10,64 @@ import sqlite3
 import shutil
 import zipfile
 import subprocess
+import logging
+import traceback
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
+from datetime import datetime
+
+# 导入授权管理模块
+try:
+    from license_manager import LicenseManager
+    LICENSE_ENABLED = True
+except ImportError:
+    LICENSE_ENABLED = False
+
+
+class Logger:
+    """日志管理器"""
+    def __init__(self, log_dir: Path):
+        self.log_dir = log_dir
+        self.log_dir.mkdir(exist_ok=True)
+        self.log_file = self.log_dir / "wiz_export.log"
+
+        # 配置日志
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s [%(levelname)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+            handlers=[
+                logging.FileHandler(self.log_file, mode='w', encoding='utf-8'),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def info(self, msg: str):
+        self.logger.info(msg)
+
+    def error(self, msg: str):
+        self.logger.error(msg)
+
+    def warning(self, msg: str):
+        self.logger.warning(msg)
+
+    def debug(self, msg: str):
+        self.logger.debug(msg)
+
+    def exception(self, msg: str):
+        self.logger.exception(msg)
 
 
 class WizExporter:
-    def __init__(self, username: str, export_path: str):
+    def __init__(self, username: str, export_path: str, wiz_home: Path, logger: Logger):
         self.username = username
         self.export_path = export_path
-        self.wiz_home = Path.home() / ".wiznote" / username / "data"
+        self.wiz_home = wiz_home
         self.db_path = self.wiz_home / "index.db"
         self.notes_dir = self.wiz_home / "notes"
         self.attachments_dir = self.wiz_home / "attachments"
+        self.logger = logger
 
         # 输出目录
         self.output_dir = Path("wiz")
@@ -32,17 +78,18 @@ class WizExporter:
 
     def connect_db(self) -> bool:
         """连接 SQLite 数据库"""
+        self.logger.info(f"尝试连接数据库: {self.db_path}")
         if not self.db_path.exists():
-            print(f"错误: 数据库文件不存在: {self.db_path}")
+            self.logger.error(f"数据库文件不存在: {self.db_path}")
             return False
 
         try:
             self.conn = sqlite3.connect(str(self.db_path))
             self.conn.row_factory = sqlite3.Row
-            print(f"成功连接到数据库: {self.db_path}")
+            self.logger.info(f"成功连接到数据库: {self.db_path}")
             return True
         except sqlite3.Error as e:
-            print(f"数据库连接错误: {e}")
+            self.logger.error(f"数据库连接错误: {e}")
             return False
 
     def show_tables(self) -> None:
@@ -52,9 +99,7 @@ class WizExporter:
 
         cursor = self.conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = [row[0] for row in cursor.fetchall()]
-        print("\n数据库中的表:")
-        for table in tables:
-            print(f"  - {table}")
+        self.logger.info(f"数据库中的表: {', '.join(tables)}")
 
     def get_folders(self, parent_path: str) -> List[Dict]:
         """获取指定路径下的所有子目录"""
@@ -166,10 +211,10 @@ class WizExporter:
                 (self.output_dir / relative_path).mkdir(parents=True, exist_ok=True)
                 (self.tmp_dir / relative_path).mkdir(parents=True, exist_ok=True)
 
-        print(f"目录结构创建完成:")
-        print(f"  - 输出目录: {self.output_dir.absolute()}")
-        print(f"  - 临时目录: {self.tmp_dir.absolute()}")
-        print(f"  - 媒体目录: {self.media_dir.absolute()}")
+        self.logger.info(f"目录结构创建完成:")
+        self.logger.info(f"  - 输出目录: {self.output_dir.absolute()}")
+        self.logger.info(f"  - 临时目录: {self.tmp_dir.absolute()}")
+        self.logger.info(f"  - 媒体目录: {self.media_dir.absolute()}")
 
     def _get_relative_path(self, folder_path: str) -> str:
         """获取相对于导出根目录的相对路径"""
@@ -233,7 +278,7 @@ class WizExporter:
         # 获取源文件路径
         source_path = self._get_note_file_path(doc)
         if not source_path:
-            print(f"  警告: 找不到笔记文件: {title} ({guid})")
+            self.logger.warning(f"找不到笔记文件: {title} ({guid})")
             return False
 
         try:
@@ -260,7 +305,7 @@ class WizExporter:
                 if html_files:
                     html_file = html_files[0]
                 else:
-                    print(f"  警告: 找不到 HTML 文件: {title}")
+                    self.logger.warning(f"找不到 HTML 文件: {title}")
                     return False
 
             # 处理附件
@@ -273,14 +318,14 @@ class WizExporter:
             success = self._convert_to_markdown(html_file, md_file, final_output_dir)
 
             if success:
-                print(f"  ✓ {title}")
+                self.logger.info(f"✓ {title}")
                 return True
             else:
-                print(f"  ✗ 转换失败: {title}")
+                self.logger.error(f"转换失败: {title}")
                 return False
 
         except Exception as e:
-            print(f"  ✗ 处理失败: {title} - {e}")
+            self.logger.exception(f"处理失败: {title}")
             return False
 
     def _sanitize_filename(self, filename: str) -> str:
@@ -330,10 +375,10 @@ class WizExporter:
             )
 
             if result.returncode != 0:
-                print("错误: 未找到 pandoc，请先安装 pandoc")
-                print("  macOS: brew install pandoc")
-                print("  Ubuntu/Debian: sudo apt-get install pandoc")
-                print("  Windows: choco install pandoc")
+                self.logger.error("未找到 pandoc，请先安装 pandoc")
+                self.logger.info("  macOS: brew install pandoc")
+                self.logger.info("  Ubuntu/Debian: sudo apt-get install pandoc")
+                self.logger.info("  Windows: choco install pandoc")
                 return False
 
             # 使用 pandoc 转换
@@ -357,14 +402,14 @@ class WizExporter:
                 self._clean_markdown_format(md_file)
                 return True
             else:
-                print(f"pandoc 错误: {result.stderr}")
+                self.logger.error(f"pandoc 错误: {result.stderr}")
                 return False
 
         except FileNotFoundError:
-            print("错误: 未找到 pandoc，请先安装 pandoc")
+            self.logger.error("未找到 pandoc，请先安装 pandoc")
             return False
         except Exception as e:
-            print(f"转换错误: {e}")
+            self.logger.exception("转换错误")
             return False
 
     def _fix_image_paths(self, md_file: Path, output_dir: Path) -> None:
@@ -431,17 +476,19 @@ class WizExporter:
 
     def export(self) -> bool:
         """执行导出操作"""
-        print("=" * 60)
-        print("为知笔记导出工具")
-        print("=" * 60)
+        self.logger.info("=" * 60)
+        self.logger.info("为知笔记导出工具")
+        self.logger.info("=" * 60)
 
         # 检查必要路径
+        self.logger.info(f"检查 WizNote 数据目录: {self.wiz_home}")
         if not self.wiz_home.exists():
-            print(f"错误: WizNote 数据目录不存在: {self.wiz_home}")
+            self.logger.error(f"WizNote 数据目录不存在: {self.wiz_home}")
             return False
 
+        self.logger.info(f"检查 notes 目录: {self.notes_dir}")
         if not self.notes_dir.exists():
-            print(f"错误: notes 目录不存在: {self.notes_dir}")
+            self.logger.error(f"notes 目录不存在: {self.notes_dir}")
             return False
 
         # 连接数据库
@@ -452,16 +499,16 @@ class WizExporter:
         self.show_tables()
 
         # 获取所有子目录
-        print(f"\n正在扫描目录: {self.export_path}")
+        self.logger.info(f"正在扫描目录: {self.export_path}")
         folders = self.get_all_subfolders(self.export_path)
-        print(f"找到 {len(folders)} 个目录")
+        self.logger.info(f"找到 {len(folders)} 个目录")
 
         # 添加根目录本身
         root_folder = {'path': self.export_path, 'name': os.path.basename(self.export_path) or 'root'}
         all_folders = [root_folder] + folders
 
         # 创建目录结构
-        print("\n创建目录结构...")
+        self.logger.info("创建目录结构...")
         self.create_directory_structure(all_folders)
 
         # 处理每个目录中的笔记
@@ -473,7 +520,7 @@ class WizExporter:
             docs = self.get_documents(folder_path)
 
             if docs:
-                print(f"\n处理目录: {folder_path}")
+                self.logger.info(f"处理目录: {folder_path}")
                 for doc in docs:
                     total_docs += 1
                     if self.process_document(doc):
@@ -484,57 +531,207 @@ class WizExporter:
             self.conn.close()
 
         # 统计信息
-        print("\n" + "=" * 60)
-        print("导出完成!")
-        print(f"总笔记数: {total_docs}")
-        print(f"成功导出: {success_docs}")
-        print(f"失败: {total_docs - success_docs}")
-        print(f"输出目录: {self.output_dir.absolute()}")
-        print("=" * 60)
+        self.logger.info("=" * 60)
+        self.logger.info("导出完成!")
+        self.logger.info(f"总笔记数: {total_docs}")
+        self.logger.info(f"成功导出: {success_docs}")
+        self.logger.info(f"失败: {total_docs - success_docs}")
+        self.logger.info(f"输出目录: {self.output_dir.absolute()}")
+        self.logger.info("=" * 60)
 
         return success_docs > 0
 
     def cleanup(self) -> None:
         """清理临时目录"""
         if self.tmp_dir.exists():
-            print(f"\n清理临时目录: {self.tmp_dir}")
+            self.logger.info(f"清理临时目录: {self.tmp_dir}")
             shutil.rmtree(self.tmp_dir)
-            print("清理完成")
+            self.logger.info("清理完成")
+
+
+def get_default_wiz_home() -> Path:
+    """获取默认的 WizNote 数据目录"""
+    return Path.home() / ".wiznote"
+
+
+def get_os_name() -> str:
+    """获取操作系统名称"""
+    if sys.platform == "darwin":
+        return "macOS"
+    elif sys.platform == "win32":
+        return "Windows"
+    elif sys.platform.startswith("linux"):
+        return "Linux"
+    else:
+        return "Unknown"
+
+
+def get_default_wiz_home_display() -> str:
+    """获取当前操作系统下的默认 WizNote 数据目录显示路径"""
+    if sys.platform == "darwin":
+        return "~/.wiznote"
+    elif sys.platform == "win32":
+        return "C:\\Users\\用户名\\.wiznote"
+    else:
+        return "~/.wiznote"
+
+
+# 全局授权管理器实例（用于在导出成功后扣次数）
+_license_manager = None
+
+def get_license_manager():
+    """获取授权管理器实例"""
+    global _license_manager
+    if _license_manager is None:
+        _license_manager = LicenseManager()
+    return _license_manager
+
+def check_license():
+    """检查授权，返回是否允许继续运行（不扣次数）"""
+    if not LICENSE_ENABLED:
+        return True, None
+
+    manager = get_license_manager()
+    allowed, remaining, machine_code, error = manager.check_only()
+
+    if not allowed:
+        print("\n" + "=" * 60)
+        print("           ⚠️ 需要解锁")
+        print("=" * 60)
+        print()
+        print("本工具需要解锁后才能使用。")
+        print()
+        print("请联系我获取解锁码（重置码）：")
+        print()
+        print("  QQ: 843115404")
+        print()
+        print("-" * 60)
+        print(f"您的机器码: {machine_code}")
+        print("-" * 60)
+        print()
+        print("请复制以上机器码发送给我，我会为您生成解锁码。")
+        print("=" * 60)
+        print()
+
+        # 询问是否有重置码
+        has_code = input("是否有解锁码? (y/n): ").strip().lower()
+        if has_code == 'y':
+            reset_code = input("请输入解锁码: ").strip()
+            if manager.reset_with_code(reset_code):
+                print("\n✓ 解锁成功！")
+                # 重新检查授权
+                allowed, remaining, machine_code, error = manager.check_only()
+                if allowed:
+                    print(f"剩余使用次数: {remaining}")
+                    return True, remaining
+            else:
+                print("\n✗ 解锁码无效，请检查输入是否正确。")
+
+        return False, 0
+
+    return True, remaining
+
+def consume_license():
+    """消耗一次使用次数（导出成功后调用）"""
+    if not LICENSE_ENABLED:
+        return True
+
+    manager = get_license_manager()
+    if manager.use_one():
+        info = manager.get_usage_info()
+        print(f"\n本次导出已记录，剩余使用次数: {info['remaining']}")
+        return True
+    return False
 
 
 def main():
-    print("为知笔记(WizNote)导出工具")
-    print("-" * 60)
+    # 首先检查授权
+    license_ok, remaining = check_license()
+    if not license_ok:
+        input("\n按回车键退出...")
+        sys.exit(0)
 
-    # 获取用户名
-    username = input("请输入 WizNote 用户名: ").strip()
-    if not username:
-        print("错误: 用户名不能为空")
+    # 创建日志目录
+    log_dir = Path("wizlog")
+    logger = Logger(log_dir)
+
+    try:
+        print("为知笔记(WizNote)导出工具")
+        print("-" * 60)
+        if remaining is not None:
+            print(f"剩余使用次数: {remaining}")
+        logger.info("程序启动")
+
+        # 获取 WizNote 数据目录
+        default_wiz_home = get_default_wiz_home()
+        default_display = get_default_wiz_home_display()
+        os_name = get_os_name()
+
+        print(f"\n默认 WizNote 数据目录: {default_display}")
+        if os_name == "macOS":
+            print("查看方式: WizNote → 偏好设置 → 存储")
+        elif os_name == "Windows":
+            print("查看方式: 菜单 → 向下箭头 → 选项 → 数据存储")
+        else:
+            print("(可通过 WizNote 菜单-选项-数据存储 查看或修改)")
+
+        wiz_home_input = input(f"请输入 WizNote 数据目录 [直接回车使用默认]: ").strip()
+        if wiz_home_input:
+            wiz_home = Path(wiz_home_input)
+        else:
+            wiz_home = default_wiz_home
+
+        logger.info(f"使用数据目录: {wiz_home}")
+
+        # 获取用户名
+        username = input("\n请输入 WizNote 用户名: ").strip()
+        if not username:
+            print("错误: 用户名不能为空")
+            logger.error("用户名不能为空")
+            sys.exit(1)
+
+        logger.info(f"用户名: {username}")
+
+        # 获取导出路径
+        export_path = input("请输入要导出的目录路径 (如 /我的笔记/工作) [直接回车导出全部]: ").strip()
+        if not export_path:
+            export_path = "/"  # 默认为根目录
+
+        # 确保路径以 / 开头
+        if not export_path.startswith("/"):
+            export_path = "/" + export_path
+
+        logger.info(f"导出路径: {export_path}")
+
+        # 创建导出器
+        wiz_home_full = wiz_home / username / "data"
+        exporter = WizExporter(username, export_path, wiz_home_full, logger)
+
+        # 执行导出
+        success = exporter.export()
+
+        # 导出成功后消耗使用次数
+        if success:
+            consume_license()
+
+        # 询问是否清理临时目录
+        if success:
+            print()
+            cleanup = input("是否清理临时目录 wiz_tmp? (y/n): ").strip().lower()
+            if cleanup == 'y':
+                exporter.cleanup()
+
+        logger.info(f"程序结束，成功: {success}")
+        sys.exit(0 if success else 1)
+
+    except KeyboardInterrupt:
+        print("\n\n用户取消操作")
+        logger.info("用户取消操作 (KeyboardInterrupt)")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n程序发生错误: {e}")
+        logger.exception("程序发生未捕获的异常")
         sys.exit(1)
-
-    # 获取导出路径
-    export_path = input("请输入要导出的目录路径 (如 /我的笔记/工作): ").strip()
-    if not export_path:
-        export_path = "/"  # 默认为根目录
-
-    # 确保路径以 / 开头
-    if not export_path.startswith("/"):
-        export_path = "/" + export_path
-
-    # 创建导出器
-    exporter = WizExporter(username, export_path)
-
-    # 执行导出
-    success = exporter.export()
-
-    # 询问是否清理临时目录
-    if success:
-        print()
-        cleanup = input("是否清理临时目录 wiz_tmp? (y/n): ").strip().lower()
-        if cleanup == 'y':
-            exporter.cleanup()
-
-    sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":

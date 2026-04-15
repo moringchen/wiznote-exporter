@@ -1,0 +1,128 @@
+# WizNote 为知笔记导出工具
+
+将 WizNote 为知笔记导出为 Markdown 格式，便于导入 Obsidian。
+
+## 下载地址
+
+- **Windows 版本**: [WizNote导出工具-Windows.zip](release/WizNote导出工具-Windows.zip)
+  - 解压后运行 `WizNote导出工具.exe`
+
+- **macOS 版本**: [WizNote导出工具-macOS.zip](release/WizNote导出工具-macOS.zip)
+  - 解压后双击运行 `启动.command`
+
+## 使用方法
+
+### Windows
+
+1. 下载并解压 `WizNote导出工具-Windows.zip`
+2. 双击运行 `WizNote导出工具.exe`
+3. 按提示输入信息：
+   - **用户名**: 你的 WizNote 账号（如 `yourname@email.com`）
+   - **导出目录**: 要导出的笔记路径（如 `/My Journals` 或 `/`）
+
+### macOS
+
+1. 下载并解压 `WizNote导出工具-macOS.zip`
+2. 双击运行 `启动.command`
+   - 首次运行可能需要右键选择"打开"，或在系统偏好设置中允许
+3. 按提示输入信息
+
+## 导出路径说明
+
+输入的导出路径格式：
+- `/` - 导出全部笔记
+- `/My Journals` - 只导出日记
+- `/工作/项目` - 只导出特定目录
+
+## 输出结构
+
+导出完成后，会在当前目录生成：
+
+```
+wiz/                          # Markdown 文件
+└── My Journals/              # 与为知笔记相同的目录结构
+    └── 2013/
+        └── 2013-02/
+            └── xxx.md
+
+wiz_tmp/                      # 临时文件（可删除）
+
+wiz/media/                    # 图片附件
+└── My Journals/
+    └── 2013/
+        └── 2013-02/
+            └── xxx.png
+```
+
+## 导入 Obsidian
+
+1. 打开 Obsidian
+2. 创建或选择一个仓库
+3. 将 `wiz` 文件夹中的所有内容复制到 Obsidian 仓库中
+4. 图片路径已自动调整为相对路径，可直接显示
+
+## 常见问题
+
+### Q: 找不到笔记文件？
+A: 请确认：
+- 用户名输入正确（通常为邮箱格式）
+- WizNote 数据存在于 `~/.wiznote/{用户名}/data/`
+
+### Q: 导出的 Markdown 中图片不显示？
+A: 确保 `wiz` 和 `wiz/media` 目录一起复制到 Obsidian 中，图片使用相对路径 `../media/...` 引用。
+
+### Q: Windows 上运行时被杀毒软件拦截？
+A: 这是 PyInstaller 打包的常见问题，请将程序添加到杀毒软件白名单。
+
+### Q: macOS 上提示"无法打开，因为无法验证开发者"？
+A: 右键点击 `启动.command`，选择"打开"。或在 系统设置 -> 隐私与安全性 中允许。
+
+## 从源码运行
+
+如果你有 Python 环境：
+
+```bash
+# 安装依赖
+pip install -r requirements.txt
+
+# 运行
+python wiz_export.py
+```
+
+## 构建可执行文件
+
+### 构建当前平台的版本
+
+```bash
+python build.py
+```
+
+### 手动构建
+
+**Windows:**
+```bash
+pyinstaller --onefile --windowed --name "WizNote导出工具" wiz_export.py
+```
+
+**macOS:**
+```bash
+pyinstaller --onefile --name "WizNote导出工具" wiz_export.py
+```
+
+## 系统要求
+
+- **Windows**: Windows 10/11 64位
+- **macOS**: macOS 10.15 或更高版本
+
+## 依赖
+
+- Python 3.8+ (仅源码运行需要)
+- pandoc (可选，用于更好的 Markdown 转换)
+
+## 许可证
+
+MIT License
+
+## 作者
+
+个人工具，仅供学习交流使用。

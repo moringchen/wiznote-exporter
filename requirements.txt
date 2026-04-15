@@ -1,0 +1,11 @@
+# WizNote 导出工具依赖
+# 打包工具
+pyinstaller>=6.0.0
+
+# 其他依赖（Python 标准库已包含）
+# - sqlite3
+# - zipfile
+# - subprocess
+# - pathlib
+# - shutil
+# - re

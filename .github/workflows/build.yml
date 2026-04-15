@@ -1,0 +1,85 @@
+name: Build WizNote Exporter
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+
+    - name: Build Windows executable
+      run: |
+        pyinstaller --onefile --windowed --name "WizNote导出工具" wiz_export.py
+
+    - name: Create release package
+      run: |
+        mkdir -p release/WizNote导出工具-Windows
+        cp dist/WizNote导出工具.exe release/WizNote导出工具-Windows/
+        echo "WizNote 为知笔记导出工具 - Windows 版本" > release/WizNote导出工具-Windows/使用说明.txt
+        echo "===============================================" >> release/WizNote导出工具-Windows/使用说明.txt
+        echo "" >> release/WizNote导出工具-Windows/使用说明.txt
+        echo "【系统要求】" >> release/WizNote导出工具-Windows/使用说明.txt
+        echo "- Windows 10/11 64位" >> release/WizNote导出工具-Windows/使用说明.txt
+        echo "- 无需安装 Python，已打包为独立应用" >> release/WizNote导出工具-Windows/使用说明.txt
+        cd release && zip -r WizNote导出工具-Windows.zip WizNote导出工具-Windows/
+
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: WizNote导出工具-Windows
+        path: release/WizNote导出工具-Windows.zip
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+
+    - name: Build macOS executable
+      run: |
+        pyinstaller --onefile --name "WizNote导出工具" wiz_export.py
+
+    - name: Create release package
+      run: |
+        mkdir -p release/WizNote导出工具-macOS
+        cp dist/WizNote导出工具 release/WizNote导出工具-macOS/
+        cat > release/WizNote导出工具-macOS/启动.command << 'EOF'
+        #!/bin/bash
+        cd "$(dirname "$0")"
+        ./WizNote导出工具
+        read -p "按回车键退出..."
+        EOF
+        chmod +x release/WizNote导出工具-macOS/启动.command
+        cd release && zip -r WizNote导出工具-macOS.zip WizNote导出工具-macOS/
+
+    - name: Upload macOS artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: WizNote导出工具-macOS
+        path: release/WizNote导出工具-macOS.zip

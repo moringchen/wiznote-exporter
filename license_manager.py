@@ -15,6 +15,17 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 
+def get_resource_path(filename: str) -> Path:
+    """获取资源文件路径（支持 PyInstaller 打包后的环境）"""
+    # PyInstaller 会将资源打包到临时目录，通过 _MEIPASS 访问
+    if hasattr(sys, '_MEIPASS'):
+        # 打包后的环境
+        return Path(sys._MEIPASS) / filename
+    else:
+        # 开发环境
+        return Path(filename)
+
+
 class LicenseManager:
     """授权管理器 - 管理使用次数和重置码验证"""
 
@@ -23,7 +34,8 @@ class LicenseManager:
     RESET_LIMIT = 30          # 解锁后限制
 
     def __init__(self, private_key_file: str = "private_key.txt"):
-        self.private_key_file = Path(private_key_file)
+        # 使用 get_resource_path 来支持 PyInstaller 打包后的环境
+        self.private_key_file = get_resource_path(private_key_file)
         self.license_data: Optional[Dict[str, Any]] = None
         self.storage_paths: list = []
         self._init_storage_paths()

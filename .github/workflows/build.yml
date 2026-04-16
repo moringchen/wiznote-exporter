@@ -31,7 +31,7 @@ jobs:
 
     - name: Build Windows executable
       run: |
-        pyinstaller --onefile --name "WizNote导出工具" wiz_export.py
+        pyinstaller --onefile --name "WizNote导出工具" --add-data "private_key.txt;." wiz_export.py
 
     - name: Create release package
       shell: pwsh
@@ -105,7 +105,7 @@ jobs:
 
     - name: Build macOS executable
       run: |
-        pyinstaller --onefile --name "WizNote导出工具" wiz_export.py
+        pyinstaller --onefile --name "WizNote导出工具" --add-data "private_key.txt:." wiz_export.py
 
     - name: Create release package
       run: |

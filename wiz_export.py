@@ -715,17 +715,36 @@ def main():
 
         logger.info(f"导出路径: {export_path}")
 
-        # 创建导出器 - 优先使用 Data/邮箱 目录，如果不存在则降级到 data/邮箱
-        data_dir = wiz_home / "Data" / username
-        data_dir_lower = wiz_home / "data" / username
-        logger.info(f"检查 Data 目录: {data_dir} (exists: {data_dir.exists()})")
-        logger.info(f"检查 data 目录: {data_dir_lower} (exists: {data_dir_lower.exists()})")
-        if not data_dir.exists():
-            data_dir = data_dir_lower
-            logger.info(f"Data 目录不存在，使用 data 目录: {data_dir}")
+        # 创建导出器 - 根据操作系统选择数据目录策略
+        if sys.platform == "win32":
+            # Windows: 优先 Data/邮箱，降级 data/邮箱，最后尝试 邮箱/Data 和 邮箱/data
+            data_paths = [
+                wiz_home / "Data" / username,
+                wiz_home / "data" / username,
+                wiz_home / username / "Data",
+                wiz_home / username / "data",
+            ]
         else:
-            logger.info(f"使用 Data 目录: {data_dir}")
-        wiz_home_full = data_dir
+            # macOS/Linux: 优先 邮箱/data，降级 邮箱/Data，最后尝试 data/邮箱 和 Data/邮箱
+            data_paths = [
+                wiz_home / username / "data",
+                wiz_home / username / "Data",
+                wiz_home / "data" / username,
+                wiz_home / "Data" / username,
+            ]
+
+        wiz_home_full = None
+        for path in data_paths:
+            logger.info(f"检查目录: {path} (exists: {path.exists()})")
+            if path.exists():
+                wiz_home_full = path
+                logger.info(f"使用目录: {path}")
+                break
+
+        if wiz_home_full is None:
+            # 如果都不存在，使用默认的第一个路径
+            wiz_home_full = data_paths[0]
+            logger.info(f"未找到存在的目录，使用默认: {wiz_home_full}")
         exporter = WizExporter(username, export_path, wiz_home_full, logger)
 
         # 执行导出

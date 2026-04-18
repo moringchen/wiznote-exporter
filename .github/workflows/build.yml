@@ -103,9 +103,9 @@ jobs:
       run: |
         echo "${{ secrets.PRIVATE_KEY }}" > private_key.txt
 
-    - name: Build macOS executable
+    - name: Build macOS executable (Universal2)
       run: |
-        pyinstaller --onefile --name "WizNote导出工具" --add-data "private_key.txt:." wiz_export.py
+        pyinstaller --onefile --name "WizNote导出工具" --target-arch universal2 --add-data "private_key.txt:." wiz_export.py
 
     - name: Create release package
       run: |

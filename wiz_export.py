@@ -715,9 +715,9 @@ def main():
 
         logger.info(f"导出路径: {export_path}")
 
-        # 创建导出器 - 优先使用 Data 目录，如果不存在则降级到 data
-        data_dir = wiz_home / username / "Data"
-        data_dir_lower = wiz_home / username / "data"
+        # 创建导出器 - 优先使用 Data/邮箱 目录，如果不存在则降级到 data/邮箱
+        data_dir = wiz_home / "Data" / username
+        data_dir_lower = wiz_home / "data" / username
         logger.info(f"检查 Data 目录: {data_dir} (exists: {data_dir.exists()})")
         logger.info(f"检查 data 目录: {data_dir_lower} (exists: {data_dir_lower.exists()})")
         if not data_dir.exists():

@@ -119,3 +119,33 @@ def test_convert_to_markdown_without_pandoc_ignores_head_content(tmp_path, monke
     assert '页面标题' not in content
     assert 'display:none' not in content
     assert 'console.log' not in content
+
+
+def test_convert_to_markdown_handles_utf16le_encoding(tmp_path, monkeypatch):
+    """测试内置转换器能正确处理 UTF-16LE 编码的 HTML"""
+    exporter = WizExporter('moringchen123@sina.com', '/', tmp_path, DummyLogger())
+    exporter.output_dir = tmp_path / 'wiz'
+    exporter.media_dir = exporter.output_dir / 'media'
+    exporter.output_dir.mkdir()
+    exporter.media_dir.mkdir()
+
+    html_file = tmp_path / 'note.html'
+    md_file = exporter.output_dir / 'note.md'
+
+    # 写入 UTF-16LE 编码的 HTML（带 BOM）
+    html_content = '<h1>UTF16标题</h1><p>UTF16内容</p>'
+    html_file.write_bytes(b'\xff\xfe' + html_content.encode('utf-16-le'))
+
+    def fake_run(cmd, *args, **kwargs):
+        if cmd[0] == 'pandoc':
+            raise FileNotFoundError
+        return subprocess.CompletedProcess(cmd, 0, '', '')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    success = exporter._convert_to_markdown(html_file, md_file, exporter.output_dir)
+
+    assert success is True
+    content = md_file.read_text(encoding='utf-8')
+    assert 'UTF16标题' in content
+    assert 'UTF16内容' in content

@@ -463,6 +463,12 @@ class WizExporter:
             tmp_output_dir.mkdir(parents=True, exist_ok=True)
             final_output_dir.mkdir(parents=True, exist_ok=True)
 
+            # 检查文件格式（ZIWR 是 WizNote 私有格式，不是 ZIP）
+            file_header = source_path.read_bytes()[:4]
+            if file_header == b'ZIWR':
+                self.logger.warning(f"跳过 ZIWR 格式笔记（暂不支持）: {title}")
+                return False
+
             # 复制到临时目录
             tmp_zip_path = tmp_output_dir / f"{safe_title}.zip"
             shutil.copy2(source_path, tmp_zip_path)
@@ -585,7 +591,20 @@ class WizExporter:
 
     def _convert_to_markdown_without_pandoc(self, html_file: Path, md_file: Path, output_dir: Path) -> bool:
         try:
-            html_content = html_file.read_text(encoding='utf-8')
+            # 读取原始字节并检测编码
+            raw_bytes = html_file.read_bytes()
+
+            # 检测 UTF-16 BOM
+            if raw_bytes.startswith(b'\xff\xfe'):
+                # UTF-16 LE
+                html_content = raw_bytes.decode('utf-16-le')
+            elif raw_bytes.startswith(b'\xfe\xff'):
+                # UTF-16 BE
+                html_content = raw_bytes.decode('utf-16-be')
+            else:
+                # 尝试 UTF-8
+                html_content = raw_bytes.decode('utf-8')
+
             markdown = _MarkdownHTMLParser().convert(html_content)
             md_file.write_text(markdown, encoding='utf-8')
             self._fix_image_paths(md_file, output_dir)

@@ -5,6 +5,7 @@
 """
 
 import os
+import re
 import sys
 import sqlite3
 import shutil
@@ -12,6 +13,8 @@ import zipfile
 import subprocess
 import logging
 import traceback
+from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
@@ -22,6 +25,163 @@ try:
     LICENSE_ENABLED = True
 except ImportError:
     LICENSE_ENABLED = False
+
+
+class _MarkdownHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts: List[str] = []
+        self.list_stack: List[Tuple[str, int]] = []
+        self.link_stack: List[Optional[str]] = []
+        self.inline_stack: List[str] = []
+        self.blockquote_level = 0
+        self.in_pre = False
+        self.in_code = False
+        self.pending_heading: Optional[int] = None
+        self.ignored_tags: List[str] = []
+
+    def convert(self, html: str) -> str:
+        self.feed(html)
+        self.close()
+        content = ''.join(self.parts)
+        content = content.replace('\r\n', '\n').replace('\r', '\n')
+        content = content.replace('\xa0', ' ')
+        content = unescape(content)
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        return content.strip() + '\n'
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+
+        if tag in {'head', 'style', 'script'}:
+            self.ignored_tags.append(tag)
+            return
+
+        if self.ignored_tags:
+            return
+
+        if tag in {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
+            self._ensure_block_break()
+            level = int(tag[1])
+            self.parts.append('#' * level + ' ')
+            self.pending_heading = level
+        elif tag in {'p', 'div'}:
+            self._ensure_block_break()
+        elif tag == 'br':
+            self.parts.append('  \n')
+        elif tag in {'strong', 'b'}:
+            self.parts.append('**')
+            self.inline_stack.append('**')
+        elif tag in {'em', 'i'}:
+            self.parts.append('*')
+            self.inline_stack.append('*')
+        elif tag == 'code':
+            if self.in_pre:
+                self.in_code = True
+            else:
+                self.parts.append('`')
+                self.inline_stack.append('`')
+        elif tag == 'pre':
+            self._ensure_block_break()
+            self.parts.append('```\n')
+            self.in_pre = True
+        elif tag == 'a':
+            self.parts.append('[')
+            self.link_stack.append(attrs.get('href'))
+        elif tag == 'img':
+            alt = attrs.get('alt', '')
+            src = attrs.get('src', '')
+            self.parts.append(f'![{alt}]({src})')
+        elif tag == 'ul':
+            self._ensure_block_break()
+            self.list_stack.append(('ul', 0))
+        elif tag == 'ol':
+            self._ensure_block_break()
+            self.list_stack.append(('ol', 1))
+        elif tag == 'li':
+            self._ensure_line_break()
+            indent = '  ' * max(len(self.list_stack) - 1, 0)
+            if self.list_stack and self.list_stack[-1][0] == 'ol':
+                index = self.list_stack[-1][1]
+                self.parts.append(f'{indent}{index}. ')
+                self.list_stack[-1] = ('ol', index + 1)
+            else:
+                self.parts.append(f'{indent}- ')
+        elif tag == 'blockquote':
+            self._ensure_block_break()
+            self.blockquote_level += 1
+            self.parts.append('> ' * self.blockquote_level)
+
+    def handle_endtag(self, tag):
+        if self.ignored_tags:
+            if tag == self.ignored_tags[-1]:
+                self.ignored_tags.pop()
+            return
+
+        if tag in {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
+            self.parts.append('\n\n')
+            self.pending_heading = None
+        elif tag in {'p', 'div'}:
+            self.parts.append('\n\n')
+        elif tag in {'strong', 'b', 'em', 'i'}:
+            if self.inline_stack:
+                self.parts.append(self.inline_stack.pop())
+        elif tag == 'code':
+            if self.in_pre:
+                self.in_code = False
+            elif self.inline_stack and self.inline_stack[-1] == '`':
+                self.parts.append(self.inline_stack.pop())
+        elif tag == 'pre':
+            self.parts.append('\n```\n\n')
+            self.in_pre = False
+        elif tag == 'a':
+            href = self.link_stack.pop() if self.link_stack else None
+            if href:
+                self.parts.append(f']({href})')
+            else:
+                self.parts.append(']')
+        elif tag == 'li':
+            self.parts.append('\n')
+        elif tag in {'ul', 'ol'}:
+            if self.list_stack:
+                self.list_stack.pop()
+            self.parts.append('\n')
+        elif tag == 'blockquote':
+            self.parts.append('\n\n')
+            self.blockquote_level = max(0, self.blockquote_level - 1)
+
+    def handle_data(self, data):
+        if not data or self.ignored_tags:
+            return
+        if self.in_pre:
+            self.parts.append(data)
+            return
+
+        text = re.sub(r'\s+', ' ', data)
+        if not text.strip():
+            return
+        if self.blockquote_level and self._at_line_start():
+            self.parts.append('> ' * self.blockquote_level)
+        self.parts.append(text)
+
+    def _at_line_start(self) -> bool:
+        return not self.parts or self.parts[-1].endswith('\n')
+
+    def _ensure_line_break(self) -> None:
+        if not self.parts:
+            return
+        if not self.parts[-1].endswith('\n'):
+            self.parts.append('\n')
+
+    def _ensure_block_break(self) -> None:
+        if not self.parts:
+            return
+        if self.parts[-1].endswith('\n\n'):
+            return
+        if self.parts[-1].endswith('\n'):
+            self.parts.append('\n')
+        else:
+            self.parts.append('\n\n')
 
 
 class Logger:
@@ -381,9 +541,8 @@ class WizExporter:
                 shutil.copy2(file_path, dest_path)
 
     def _convert_to_markdown(self, html_file: Path, md_file: Path, output_dir: Path) -> bool:
-        """使用 pandoc 将 HTML 转换为 Markdown"""
+        """将 HTML 转换为 Markdown"""
         try:
-            # 检查 pandoc 是否安装
             result = subprocess.run(
                 ["pandoc", "--version"],
                 capture_output=True,
@@ -391,42 +550,49 @@ class WizExporter:
                 check=False
             )
 
-            if result.returncode != 0:
-                self.logger.error("未找到 pandoc，请先安装 pandoc")
-                self.logger.info("  macOS: brew install pandoc")
-                self.logger.info("  Ubuntu/Debian: sudo apt-get install pandoc")
-                self.logger.info("  Windows: choco install pandoc")
-                return False
-
-            # 使用 pandoc 转换
-            result = subprocess.run(
-                [
-                    "pandoc",
-                    str(html_file),
-                    "-f", "html-native_divs-native_spans",
-                    "-t", "markdown",
-                    "-o", str(md_file),
-                    "--wrap=none"
-                ],
-                capture_output=True,
-                text=True,
-                check=False
-            )
-
             if result.returncode == 0:
-                # 修复图片路径和格式
-                self._fix_image_paths(md_file, output_dir)
-                self._clean_markdown_format(md_file)
-                return True
-            else:
+                result = subprocess.run(
+                    [
+                        "pandoc",
+                        str(html_file),
+                        "-f", "html-native_divs-native_spans",
+                        "-t", "markdown",
+                        "-o", str(md_file),
+                        "--wrap=none"
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+
+                if result.returncode == 0:
+                    self._fix_image_paths(md_file, output_dir)
+                    self._clean_markdown_format(md_file)
+                    return True
+
                 self.logger.error(f"pandoc 错误: {result.stderr}")
                 return False
 
+            self.logger.warning("未找到 pandoc，使用内置转换器")
+            return self._convert_to_markdown_without_pandoc(html_file, md_file, output_dir)
+
         except FileNotFoundError:
-            self.logger.error("未找到 pandoc，请先安装 pandoc")
-            return False
-        except Exception as e:
+            self.logger.warning("未找到 pandoc，使用内置转换器")
+            return self._convert_to_markdown_without_pandoc(html_file, md_file, output_dir)
+        except Exception:
             self.logger.exception("转换错误")
+            return False
+
+    def _convert_to_markdown_without_pandoc(self, html_file: Path, md_file: Path, output_dir: Path) -> bool:
+        try:
+            html_content = html_file.read_text(encoding='utf-8')
+            markdown = _MarkdownHTMLParser().convert(html_content)
+            md_file.write_text(markdown, encoding='utf-8')
+            self._fix_image_paths(md_file, output_dir)
+            self._clean_markdown_format(md_file)
+            return True
+        except Exception:
+            self.logger.exception("内置转换器错误")
             return False
 
     def _fix_image_paths(self, md_file: Path, output_dir: Path) -> None:

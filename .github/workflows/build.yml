@@ -118,10 +118,15 @@ jobs:
         read -p "按回车键退出..."
         EOF
         chmod +x release/WizNote导出工具-macOS/启动.command
-        cd release && zip -r WizNote导出工具-macOS.zip WizNote导出工具-macOS/
+        # 使用 tar 保留权限，然后再 zip 以便用户解压方便
+        cd release/WizNote导出工具-macOS && tar -czf ../WizNote导出工具-macOS.tar.gz . && cd ..
+        # 同时创建 zip（兼容性）
+        zip -r WizNote导出工具-macOS.zip WizNote导出工具-macOS/
 
     - name: Upload macOS artifact
       uses: actions/upload-artifact@v4
       with:
         name: WizNote导出工具-macOS
-        path: release/WizNote导出工具-macOS.zip
+        path: |
+          release/WizNote导出工具-macOS.zip
+          release/WizNote导出工具-macOS.tar.gz

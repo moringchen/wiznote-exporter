@@ -76,6 +76,9 @@ class WizExporter:
 
         self.conn: Optional[sqlite3.Connection] = None
 
+    def _uses_flat_document_layout(self) -> bool:
+        return self.db_path.exists() and not self.notes_dir.exists() and any(self.wiz_home.rglob('*.ziw'))
+
     def connect_db(self) -> bool:
         """连接 SQLite 数据库"""
         self.logger.info(f"尝试连接数据库: {self.db_path}")
@@ -237,14 +240,29 @@ class WizExporter:
         return ""
 
     def _get_note_file_path(self, doc: Dict) -> Optional[Path]:
-        """获取笔记文件在 notes 目录中的路径"""
+        """获取笔记文件路径"""
         guid = doc['guid']
 
+        if self._uses_flat_document_layout():
+            relative = doc['location'].strip('/')
+            candidates = []
+            if relative:
+                candidates.append(self.wiz_home / relative / doc['name'])
+            candidates.append(self.wiz_home / doc['name'])
+
+            for path in candidates:
+                if path.exists() and path.is_file():
+                    return path
+
+            for path in self.wiz_home.rglob(doc['name']):
+                if path.is_file():
+                    return path
+            return None
+
         # WizNote 笔记文件以 GUID（带花括号）命名，无扩展名
-        # 尝试几种格式：带花括号、不带花括号
         possible_names = [
-            f"{{{guid}}}",  # {guid} 格式
-            guid,           # 纯 guid 格式
+            f"{{{guid}}}",
+            guid,
         ]
 
         for name in possible_names:
@@ -252,7 +270,6 @@ class WizExporter:
             if path.exists():
                 return path
 
-        # 如果没找到，尝试搜索
         for path in self.notes_dir.rglob(f"*{guid}*"):
             if path.is_file():
                 return path
@@ -487,7 +504,7 @@ class WizExporter:
             return False
 
         self.logger.info(f"检查 notes 目录: {self.notes_dir}")
-        if not self.notes_dir.exists():
+        if not self.notes_dir.exists() and not self._uses_flat_document_layout():
             self.logger.error(f"notes 目录不存在: {self.notes_dir}")
             return False
 

@@ -656,8 +656,10 @@ def main():
         sys.exit(0)
 
     if not license_ok:
-        print("\n授权检查失败，程序退出。")
-        sys.exit(0)
+        print("\n授权检查失败。")
+        print("\n按回车键退出...")
+        input()
+        return
 
     # 创建日志目录
     log_dir = Path("wizlog")
@@ -691,12 +693,14 @@ def main():
 
         logger.info(f"使用数据目录: {wiz_home}")
 
-        # 获取用户名
-        username = input("\n请输入 WizNote 用户名: ").strip()
+        # 获取邮箱（WizNote 账号）
+        username = input("\n请输入 WizNote 邮箱: ").strip()
         if not username:
-            print("错误: 用户名不能为空")
-            logger.error("用户名不能为空")
-            sys.exit(1)
+            print("错误: 邮箱不能为空")
+            logger.error("邮箱不能为空")
+            print("\n按回车键继续...")
+            input()
+            return
 
         logger.info(f"用户名: {username}")
 
@@ -711,8 +715,11 @@ def main():
 
         logger.info(f"导出路径: {export_path}")
 
-        # 创建导出器
-        wiz_home_full = wiz_home / username / "data"
+        # 创建导出器 - 优先使用 Data 目录，如果不存在则降级到 data
+        data_dir = wiz_home / username / "Data"
+        if not data_dir.exists():
+            data_dir = wiz_home / username / "data"
+        wiz_home_full = data_dir
         exporter = WizExporter(username, export_path, wiz_home_full, logger)
 
         # 执行导出
@@ -730,16 +737,21 @@ def main():
                 exporter.cleanup()
 
         logger.info(f"程序结束，成功: {success}")
-        sys.exit(0 if success else 1)
+
+        if not success:
+            print("\n导出失败，请检查错误信息。")
+            print("\n按回车键继续...")
+            input()
 
     except KeyboardInterrupt:
         print("\n\n用户取消操作")
         logger.info("用户取消操作 (KeyboardInterrupt)")
-        sys.exit(0)
     except Exception as e:
         print(f"\n程序发生错误: {e}")
         logger.exception("程序发生未捕获的异常")
-        sys.exit(1)
+        traceback.print_exc()
+        print("\n按回车键继续...")
+        input()
 
 
 if __name__ == "__main__":

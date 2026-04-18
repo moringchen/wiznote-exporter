@@ -717,8 +717,14 @@ def main():
 
         # 创建导出器 - 优先使用 Data 目录，如果不存在则降级到 data
         data_dir = wiz_home / username / "Data"
+        data_dir_lower = wiz_home / username / "data"
+        logger.info(f"检查 Data 目录: {data_dir} (exists: {data_dir.exists()})")
+        logger.info(f"检查 data 目录: {data_dir_lower} (exists: {data_dir_lower.exists()})")
         if not data_dir.exists():
-            data_dir = wiz_home / username / "data"
+            data_dir = data_dir_lower
+            logger.info(f"Data 目录不存在，使用 data 目录: {data_dir}")
+        else:
+            logger.info(f"使用 Data 目录: {data_dir}")
         wiz_home_full = data_dir
         exporter = WizExporter(username, export_path, wiz_home_full, logger)
 

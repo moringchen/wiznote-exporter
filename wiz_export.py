@@ -236,6 +236,9 @@ class WizExporter:
 
         self.conn: Optional[sqlite3.Connection] = None
 
+        # 记录导出失败的文件
+        self.failed_docs: List[Dict[str, str]] = []
+
     def _uses_flat_document_layout(self) -> bool:
         return self.db_path.exists() and not self.notes_dir.exists() and any(self.wiz_home.rglob('*.ziw'))
 
@@ -456,6 +459,11 @@ class WizExporter:
         source_path = self._get_note_file_path(doc)
         if not source_path:
             self.logger.warning(f"找不到笔记文件: {title} ({guid})")
+            self.failed_docs.append({
+                'path': location,
+                'title': title,
+                'reason': '找不到笔记文件'
+            })
             return False
 
         try:
@@ -467,6 +475,11 @@ class WizExporter:
             file_header = source_path.read_bytes()[:4]
             if file_header == b'ZIWR':
                 self.logger.warning(f"跳过 ZIWR 格式笔记（暂不支持）: {title}")
+                self.failed_docs.append({
+                    'path': location,
+                    'title': title,
+                    'reason': 'ZIWR加密格式暂不支持'
+                })
                 return False
 
             # 复制到临时目录
@@ -489,6 +502,11 @@ class WizExporter:
                     html_file = html_files[0]
                 else:
                     self.logger.warning(f"找不到 HTML 文件: {title}")
+                    self.failed_docs.append({
+                        'path': location,
+                        'title': title,
+                        'reason': 'ZIP中找不到HTML文件'
+                    })
                     return False
 
             # 处理附件
@@ -497,7 +515,12 @@ class WizExporter:
                 self._process_attachments(index_files_dir, final_output_dir, safe_title)
 
             # 使用 pandoc 转换为 markdown
-            md_file = final_output_dir / f"{safe_title}.md"
+            # 避免重复 .md 后缀
+            if safe_title.endswith('.md'):
+                md_filename = safe_title
+            else:
+                md_filename = f"{safe_title}.md"
+            md_file = final_output_dir / md_filename
             success = self._convert_to_markdown(html_file, md_file, final_output_dir)
 
             if success:
@@ -505,10 +528,20 @@ class WizExporter:
                 return True
             else:
                 self.logger.error(f"转换失败: {title}")
+                self.failed_docs.append({
+                    'path': location,
+                    'title': title,
+                    'reason': 'Markdown转换失败'
+                })
                 return False
 
         except Exception as e:
             self.logger.exception(f"处理失败: {title}")
+            self.failed_docs.append({
+                'path': location,
+                'title': title,
+                'reason': str(e)
+            })
             return False
 
     def _sanitize_filename(self, filename: str) -> str:
@@ -579,11 +612,11 @@ class WizExporter:
                 self.logger.error(f"pandoc 错误: {result.stderr}")
                 return False
 
-            self.logger.warning("未找到 pandoc，使用内置转换器")
+            self.logger.info("未找到 pandoc，使用内置转换器")
             return self._convert_to_markdown_without_pandoc(html_file, md_file, output_dir)
 
         except FileNotFoundError:
-            self.logger.warning("未找到 pandoc，使用内置转换器")
+            self.logger.info("未找到 pandoc，使用内置转换器")
             return self._convert_to_markdown_without_pandoc(html_file, md_file, output_dir)
         except Exception:
             self.logger.exception("转换错误")
@@ -732,13 +765,26 @@ class WizExporter:
         if self.conn:
             self.conn.close()
 
+        # 关闭数据库
+        if self.conn:
+            self.conn.close()
+
         # 统计信息
         self.logger.info("=" * 60)
         self.logger.info("导出完成!")
         self.logger.info(f"总笔记数: {total_docs}")
         self.logger.info(f"成功导出: {success_docs}")
-        self.logger.info(f"失败: {total_docs - success_docs}")
-        self.logger.info(f"输出目录: {self.output_dir.absolute()}")
+        failed_count = total_docs - success_docs
+        self.logger.info(f"失败: {failed_count}")
+
+        # 显示失败的文件列表
+        if self.failed_docs:
+            self.logger.info("\n失败的文件列表:")
+            for i, doc in enumerate(self.failed_docs, 1):
+                self.logger.info(f"  {i}. [{doc['path']}] {doc['title']}")
+                self.logger.info(f"     原因: {doc['reason']}")
+
+        self.logger.info(f"\n输出目录: {self.output_dir.absolute()}")
         self.logger.info("=" * 60)
 
         return success_docs > 0

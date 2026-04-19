@@ -363,6 +363,28 @@ class WizExporter:
 
         return documents
 
+    def get_document_attachments(self, document_guid: str) -> List[Dict]:
+        """获取指定笔记的所有附件（mac版附件存储在独立目录）"""
+        if not self.conn:
+            return []
+
+        cursor = self.conn.execute(
+            """SELECT ATTACHMENT_GUID, ATTACHMENT_NAME, ATTACHMENT_URL
+               FROM WIZ_DOCUMENT_ATTACHMENT
+               WHERE DOCUMENT_GUID = ?""",
+            (document_guid,)
+        )
+
+        attachments = []
+        for row in cursor.fetchall():
+            attachments.append({
+                'guid': row[0],
+                'name': row[1],
+                'url': row[2]
+            })
+
+        return attachments
+
     def create_directory_structure(self, folders: List[Dict]) -> None:
         """创建目录结构"""
         # 创建基础目录
@@ -509,10 +531,20 @@ class WizExporter:
                     })
                     return False
 
-            # 处理附件
+            # 处理附件（Windows版本：附件在ZIP文件的index_files目录中）
             index_files_dir = extract_dir / "index_files"
             if index_files_dir.exists():
                 self._process_attachments(index_files_dir, final_output_dir, safe_title)
+
+            # 处理mac版外部附件（存储在独立attachments目录）
+            external_attachments = self._process_external_attachments(guid, final_output_dir)
+            if external_attachments:
+                self.logger.debug(f"笔记 '{title}' 处理了 {len(external_attachments)} 个外部附件")
+
+            # 处理Windows版本附件（存储在笔记同级目录的_Attachments文件夹中）
+            windows_attachments = self._process_windows_attachments(source_path, final_output_dir)
+            if windows_attachments:
+                self.logger.debug(f"笔记 '{title}' 处理了 {len(windows_attachments)} 个Windows附件")
 
             # 使用 pandoc 转换为 markdown
             # 避免重复 .md 后缀
@@ -578,6 +610,153 @@ class WizExporter:
                     counter += 1
 
                 shutil.copy2(file_path, dest_path)
+
+    def _process_external_attachments(self, document_guid: str, output_dir: Path) -> List[Dict]:
+        """处理mac版存储在attachments目录下的附件
+
+        mac版为知笔记的附件单独存储在 ~/.wiznote/<邮箱>/data/attachments/ 目录下，
+        文件名格式为: {附件GUID}{附件名}
+
+        返回成功处理的附件列表
+        """
+        attachments = self.get_document_attachments(document_guid)
+        if not attachments:
+            return []
+
+        # 计算相对于output_dir的路径，构建到media的相同结构
+        try:
+            relative_path = output_dir.relative_to(self.output_dir)
+        except ValueError:
+            relative_path = Path()
+
+        media_dir = self.media_dir / relative_path
+        media_dir.mkdir(parents=True, exist_ok=True)
+
+        processed = []
+        for att in attachments:
+            att_guid = att['guid']
+            att_name = att['name']
+
+            # mac版附件文件名格式: {GUID}文件名
+            # 附件名可能包含特殊字符，需要构建可能的文件名
+            possible_names = [
+                f"{{{att_guid}}}{att_name}",
+                f"{att_guid}{att_name}",
+            ]
+
+            found = False
+            for name in possible_names:
+                att_path = self.attachments_dir / name
+                if att_path.exists():
+                    dest_path = media_dir / att_name
+
+                    # 处理重名
+                    counter = 1
+                    while dest_path.exists():
+                        stem = Path(att_name).stem
+                        suffix = Path(att_name).suffix
+                        dest_path = media_dir / f"{stem}_{counter}{suffix}"
+                        counter += 1
+
+                    try:
+                        shutil.copy2(att_path, dest_path)
+                        self.logger.debug(f"复制附件: {att_name} -> {dest_path}")
+                        processed.append({
+                            'name': att_name,
+                            'dest_name': dest_path.name,
+                            'path': dest_path
+                        })
+                        found = True
+                        break
+                    except Exception as e:
+                        self.logger.warning(f"复制附件失败 {att_name}: {e}")
+
+            if not found:
+                # 尝试模糊匹配
+                for file_path in self.attachments_dir.glob(f"*{att_guid}*"):
+                    if file_path.is_file():
+                        dest_path = media_dir / att_name
+
+                        counter = 1
+                        while dest_path.exists():
+                            stem = Path(att_name).stem
+                            suffix = Path(att_name).suffix
+                            dest_path = media_dir / f"{stem}_{counter}{suffix}"
+                            counter += 1
+
+                        try:
+                            shutil.copy2(file_path, dest_path)
+                            self.logger.debug(f"复制附件(模糊匹配): {att_name} -> {dest_path}")
+                            processed.append({
+                                'name': att_name,
+                                'dest_name': dest_path.name,
+                                'path': dest_path
+                            })
+                            found = True
+                            break
+                        except Exception as e:
+                            self.logger.warning(f"复制附件失败 {att_name}: {e}")
+
+            if not found:
+                self.logger.warning(f"找不到附件文件: {att_name} (GUID: {att_guid})")
+
+        return processed
+
+    def _process_windows_attachments(self, note_file_path: Path, output_dir: Path) -> List[Dict]:
+        """处理Windows版本存储在_Attachments目录下的附件
+
+        Windows版本为知笔记的附件存储在笔记文件同级目录下的 `_Attachments` 文件夹中，
+        例如：
+        - 笔记文件：/test/ttt.ziw
+        - 附件目录：/test/ttt_Attachments/
+
+        返回成功处理的附件列表
+        """
+        if not note_file_path or not note_file_path.exists():
+            return []
+
+        # 构建附件目录路径：笔记名（不含扩展名）+ "_Attachments"
+        note_name = note_file_path.stem  # 不含扩展名的文件名
+        attachments_dir = note_file_path.parent / f"{note_name}_Attachments"
+
+        if not attachments_dir.exists() or not attachments_dir.is_dir():
+            return []
+
+        # 计算相对于output_dir的路径，构建到media的相同结构
+        try:
+            relative_path = output_dir.relative_to(self.output_dir)
+        except ValueError:
+            relative_path = Path()
+
+        media_dir = self.media_dir / relative_path
+        media_dir.mkdir(parents=True, exist_ok=True)
+
+        processed = []
+        for file_path in attachments_dir.iterdir():
+            if file_path.is_file():
+                base_name = file_path.name
+                dest_path = media_dir / base_name
+
+                # 处理重名
+                counter = 1
+                while dest_path.exists():
+                    stem = Path(base_name).stem
+                    suffix = Path(base_name).suffix
+                    dest_path = media_dir / f"{stem}_{counter}{suffix}"
+                    counter += 1
+
+                try:
+                    shutil.copy2(file_path, dest_path)
+                    self.logger.debug(f"复制Windows附件: {base_name} -> {dest_path}")
+                    processed.append({
+                        'name': base_name,
+                        'dest_name': dest_path.name,
+                        'path': dest_path
+                    })
+                except Exception as e:
+                    self.logger.warning(f"复制Windows附件失败 {base_name}: {e}")
+
+        return processed
 
     def _convert_to_markdown(self, html_file: Path, md_file: Path, output_dir: Path) -> bool:
         """将 HTML 转换为 Markdown"""

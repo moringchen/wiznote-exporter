@@ -51,6 +51,7 @@ specs/
 
 # OMC
 .omc/
+.worktrees/
 
 # GitHub Actions will build these
 !/.github/

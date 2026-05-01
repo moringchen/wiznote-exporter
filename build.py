@@ -132,6 +132,7 @@ class Builder:
 # WizNote 导出工具启动脚本
 SCRIPT_DIR="$(dirname "$0")"
 SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
+cd "$SCRIPT_DIR"
 echo "工具启动中，请稍候，出现输入提示后再开始输入..."
 "$SCRIPT_DIR/WizNote导出工具"
 read -p "按回车键退出..."

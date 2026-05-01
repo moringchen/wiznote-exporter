@@ -411,12 +411,12 @@ def test_create_directory_structure_per_note_does_not_create_top_level_media(tmp
 
 
 
-def test_builder_macos_launcher_preserves_cwd_and_shows_wait_message():
+def test_builder_macos_launcher_changes_to_tool_directory_and_shows_wait_message():
     launcher = Builder()._get_macos_launcher_content()
 
     assert '工具启动中，请稍候' in launcher
-    assert 'cd "$(dirname "$0")"' not in launcher
     assert 'SCRIPT_DIR=' in launcher
+    assert '\ncd "$SCRIPT_DIR"\n' in launcher
     assert '"$SCRIPT_DIR/WizNote导出工具"' in launcher
 
 

@@ -113,8 +113,11 @@ jobs:
         cp dist/WizNote导出工具 release/WizNote导出工具-macOS/
         cat > release/WizNote导出工具-macOS/启动.command << 'EOF'
         #!/bin/bash
-        cd "$(dirname "$0")"
-        ./WizNote导出工具
+        # WizNote 导出工具启动脚本
+        SCRIPT_DIR="$(dirname "$0")"
+        SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
+        echo "工具启动中，请稍候，出现输入提示后再开始输入..."
+        "$SCRIPT_DIR/WizNote导出工具"
         read -p "按回车键退出..."
         EOF
         chmod +x release/WizNote导出工具-macOS/启动.command

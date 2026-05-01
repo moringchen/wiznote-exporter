@@ -41,6 +41,17 @@ def get_windows_sample_root() -> Path:
     raise FileNotFoundError(f'找不到测试样本目录: {relative}')
 
 
+def get_repo_file(relative: str) -> Path:
+    current = Path(__file__).resolve().parent
+
+    for base in [current, *current.parents]:
+        candidate = base / relative
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError(f'找不到仓库文件: {relative}')
+
+
 def test_windows_flat_layout_is_detected_without_notes_dir():
     root = get_windows_sample_root()
     exporter = WizExporter('moringchen123@sina.com', '/', root, DummyLogger())
@@ -407,6 +418,22 @@ def test_builder_macos_launcher_preserves_cwd_and_shows_wait_message():
     assert 'cd "$(dirname "$0")"' not in launcher
     assert 'SCRIPT_DIR=' in launcher
     assert '"$SCRIPT_DIR/WizNote导出工具"' in launcher
+
+
+
+def test_github_actions_macos_launcher_matches_builder_script():
+    launcher = Builder()._get_macos_launcher_content()
+    workflow = get_repo_file('.github/workflows/build.yml').read_text(encoding='utf-8')
+
+    marker = "cat > release/WizNote导出工具-macOS/启动.command << 'EOF'\n"
+    start = workflow.index(marker) + len(marker)
+    end = workflow.index("\n        EOF", start)
+    workflow_launcher = '\n'.join(
+        line[8:] if line.startswith('        ') else line
+        for line in workflow[start:end].splitlines()
+    ) + '\n'
+
+    assert workflow_launcher == launcher
 
 
 

@@ -220,7 +220,7 @@ class Logger:
 
 
 class WizExporter:
-    def __init__(self, username: str, export_path: str, wiz_home: Path, logger: Logger):
+    def __init__(self, username: str, export_path: str, wiz_home: Path, logger: Logger, attachment_mode: str = 'shared'):
         self.username = username
         self.export_path = export_path
         self.wiz_home = wiz_home
@@ -228,6 +228,7 @@ class WizExporter:
         self.notes_dir = self.wiz_home / "notes"
         self.attachments_dir = self.wiz_home / "attachments"
         self.logger = logger
+        self.attachment_mode = attachment_mode
 
         # 输出目录
         self.output_dir = Path("wiz")
@@ -424,6 +425,21 @@ class WizExporter:
 
         return ""
 
+    def _get_output_relative_path(self, output_dir: Path) -> Path:
+        try:
+            return output_dir.relative_to(self.output_dir)
+        except ValueError:
+            return Path()
+
+    def _get_attachment_target_dir(self, output_dir: Path) -> Path:
+        relative_path = self._get_output_relative_path(output_dir)
+        if self.attachment_mode == 'per_note':
+            target_dir = output_dir / 'media'
+        else:
+            target_dir = self.media_dir / relative_path
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return target_dir
+
     def _get_note_file_path(self, doc: Dict) -> Optional[Path]:
         """获取笔记文件路径"""
         guid = doc['guid']
@@ -584,24 +600,14 @@ class WizExporter:
         return filename.strip() or "untitled"
 
     def _process_attachments(self, index_files_dir: Path, output_dir: Path, note_name: str) -> None:
-        """处理笔记中的附件和图片，放在wiz/media下与markdown相同的目录结构中"""
-        # 计算相对于output_dir的路径，构建到media的相同结构
-        try:
-            relative_path = output_dir.relative_to(self.output_dir)
-        except ValueError:
-            relative_path = Path()
-
-        # 在media下创建相同的目录结构
-        media_dir = self.media_dir / relative_path
-        media_dir.mkdir(parents=True, exist_ok=True)
+        """处理笔记中的附件和图片"""
+        media_dir = self._get_attachment_target_dir(output_dir)
 
         for file_path in index_files_dir.iterdir():
             if file_path.is_file():
-                # 生成唯一的文件名
                 base_name = file_path.name
                 dest_path = media_dir / base_name
 
-                # 处理重名
                 counter = 1
                 while dest_path.exists():
                     stem = Path(base_name).stem
@@ -623,14 +629,7 @@ class WizExporter:
         if not attachments:
             return []
 
-        # 计算相对于output_dir的路径，构建到media的相同结构
-        try:
-            relative_path = output_dir.relative_to(self.output_dir)
-        except ValueError:
-            relative_path = Path()
-
-        media_dir = self.media_dir / relative_path
-        media_dir.mkdir(parents=True, exist_ok=True)
+        media_dir = self._get_attachment_target_dir(output_dir)
 
         processed = []
         for att in attachments:
@@ -722,14 +721,7 @@ class WizExporter:
         if not attachments_dir.exists() or not attachments_dir.is_dir():
             return []
 
-        # 计算相对于output_dir的路径，构建到media的相同结构
-        try:
-            relative_path = output_dir.relative_to(self.output_dir)
-        except ValueError:
-            relative_path = Path()
-
-        media_dir = self.media_dir / relative_path
-        media_dir.mkdir(parents=True, exist_ok=True)
+        media_dir = self._get_attachment_target_dir(output_dir)
 
         processed = []
         for file_path in attachments_dir.iterdir():
@@ -826,41 +818,27 @@ class WizExporter:
             self.logger.exception("内置转换器错误")
             return False
 
+    def _build_media_prefix(self, output_dir: Path) -> str:
+        relative_path = self._get_output_relative_path(output_dir)
+        if self.attachment_mode == 'per_note':
+            return 'media/'
+        target_dir = self.media_dir / relative_path
+        return f"{os.path.relpath(target_dir, output_dir).replace(os.sep, '/')}/"
+
     def _fix_image_paths(self, md_file: Path, output_dir: Path) -> None:
-        """修复 Markdown 中的图片路径为相对路径（指向wiz/media下的相同目录结构）"""
+        """修复 Markdown 中的图片路径为相对路径"""
         if not md_file.exists():
             return
 
         content = md_file.read_text(encoding='utf-8')
+        media_prefix = self._build_media_prefix(output_dir)
 
-        # 计算从markdown所在目录到media目录的相对路径
-        try:
-            relative_path = output_dir.relative_to(self.output_dir)
-        except ValueError:
-            relative_path = Path()
-
-        # 构建media的相对路径前缀 (如 ../media/My Journals/2013/2013-02/)
-        media_prefix = "../media"
-        if relative_path.parts:
-            # 需要向上退的层级数 = markdown所在目录的深度
-            # 但因为我们想要 media/My Journals/2013/2013-02/ 这样的结构
-            # 所以直接用 ../media/相对路径/
-            media_prefix = f"../media/{'/'.join(relative_path.parts)}"
-
-        # 确保路径以/结尾
-        if not media_prefix.endswith('/'):
-            media_prefix += '/'
-
-        import re
-
-        # 匹配 ![alt](index_files/filename) 格式
         content = re.sub(
             r'!\[(.*?)\]\(index_files/([^)]+)\)',
             rf'![\1]({media_prefix}\2)',
             content
         )
 
-        # 匹配 [text](index_files/filename) 格式的链接
         content = re.sub(
             r'\[(.*?)\]\(index_files/([^)]+)\)',
             rf'[\1]({media_prefix}\2)',
@@ -1003,6 +981,13 @@ def get_default_wiz_home_display() -> str:
         return "~/.wiznote"
 
 
+def parse_attachment_mode(raw: str) -> str:
+    value = raw.strip()
+    if value == '2':
+        return 'per_note'
+    return 'shared'
+
+
 # 全局授权管理器实例（用于在导出成功后扣次数）
 _license_manager = None
 
@@ -1020,6 +1005,7 @@ def check_license():
 
     manager = get_license_manager()
     allowed, remaining, machine_code, error = manager.check_only()
+    machine_code = manager.get_machine_code_for_display('1.1')
 
     if not allowed:
         print("\n" + "=" * 60)
@@ -1038,7 +1024,7 @@ def check_license():
         print()
         print("提示: 选中上面的机器码，按 Enter 键即可复制")
         print()
-        print("请复制机器码发送给我，我会为您生成解锁码。")
+        print("请复制当天显示的机器码发送给我，我会为您生成解锁码。")
         print("=" * 60)
         print()
 
@@ -1048,7 +1034,7 @@ def check_license():
             if not reset_code:
                 continue
 
-            if manager.reset_with_code(reset_code):
+            if manager.reset_with_code_v1_1(reset_code):
                 print("\n✓ 解锁成功！")
                 # 重新检查授权
                 allowed, remaining, machine_code, error = manager.check_only()
@@ -1142,6 +1128,12 @@ def main():
 
         logger.info(f"导出路径: {export_path}")
 
+        attachment_mode_input = input(
+            "请选择附件放置位置 [1=外层wiz/media，2=同目录media，直接回车默认1]: "
+        ).strip()
+        attachment_mode = parse_attachment_mode(attachment_mode_input)
+        logger.info(f"附件放置模式: {attachment_mode}")
+
         # 创建导出器 - 根据操作系统选择数据目录策略
         if sys.platform == "win32":
             # Windows: 优先 Data/邮箱，降级 data/邮箱，最后尝试 邮箱/Data 和 邮箱/data
@@ -1172,7 +1164,7 @@ def main():
             # 如果都不存在，使用默认的第一个路径
             wiz_home_full = data_paths[0]
             logger.info(f"未找到存在的目录，使用默认: {wiz_home_full}")
-        exporter = WizExporter(username, export_path, wiz_home_full, logger)
+        exporter = WizExporter(username, export_path, wiz_home_full, logger, attachment_mode=attachment_mode)
 
         # 执行导出
         success = exporter.export()

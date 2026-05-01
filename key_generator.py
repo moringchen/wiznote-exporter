@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-重置码生成器 - 供你使用（不要分发给用户）
+重置码生成器（1.0）- 供你使用（不要分发给用户）
 
 使用方法:
-    python key_generator.py <机器码>
+    python key_generator.py <1.0机器码>
 
 示例:
     python key_generator.py A3F9-K2M8-PQ7D-RL4N

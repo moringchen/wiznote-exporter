@@ -134,15 +134,24 @@ class LicenseManager:
         combined = "|".join(filter(None, components))
         return hashlib.sha256(combined.encode()).hexdigest()[:32]
 
+    def _format_machine_code(self, raw: str) -> str:
+        return '-'.join(raw[i:i+4].upper() for i in range(0, 16, 4))
+
+    def _get_machine_code_date_stamp(self, now: Optional[datetime] = None) -> str:
+        current = now or datetime.now()
+        return current.strftime('%Y%m%d')
+
     def get_machine_code(self) -> str:
         """生成可读的机器码（用户显示的）"""
         fingerprint = self._get_machine_fingerprint()
-        # 格式化为 AAAA-BBBB-CCCC-DDDD
-        formatted = '-'.join([
-            fingerprint[i:i+4].upper()
-            for i in range(0, 16, 4)
-        ])
-        return formatted
+        return self._format_machine_code(fingerprint[:16])
+
+    def get_machine_code_v1_1(self) -> str:
+        fingerprint = self._get_machine_fingerprint()
+        day_hash = hashlib.sha256(
+            f"{fingerprint}:{self._get_machine_code_date_stamp()}".encode()
+        ).hexdigest()[:16]
+        return f"V11-{self._format_machine_code(day_hash)}"
 
     def _load_private_key(self) -> Optional[str]:
         """从文件加载私钥"""
@@ -206,6 +215,31 @@ class LicenseManager:
         ).digest()
 
         # 取前16字节并编码
+        return base64.b64encode(signature[:16]).decode()
+
+    def verify_reset_code_v1_1(self, machine_code: str, reset_code: str) -> bool:
+        private_key = self._load_private_key()
+        if not private_key or not machine_code.startswith('V11-'):
+            return False
+
+        try:
+            decoded = base64.b64decode(reset_code)
+            expected = hmac.new(
+                private_key.encode(),
+                machine_code.encode(),
+                hashlib.sha256
+            ).digest()
+            return hmac.compare_digest(decoded[:16], expected[:16])
+        except Exception:
+            return False
+
+    def generate_reset_code_v1_1(self, machine_code: str) -> str:
+        private_key = self.ensure_private_key()
+        signature = hmac.new(
+            private_key.encode(),
+            machine_code.encode(),
+            hashlib.sha256
+        ).digest()
         return base64.b64encode(signature[:16]).decode()
 
     def _get_license_path(self) -> Optional[Path]:
@@ -353,6 +387,11 @@ class LicenseManager:
             'last_use': license_data.get('last_use', '未知'),
         }
 
+    def get_machine_code_for_display(self, version: str = '1.1') -> str:
+        if version == '1.0':
+            return self.get_machine_code()
+        return self.get_machine_code_v1_1()
+
     def reset_with_code(self, reset_code: str) -> bool:
         """使用重置码重置使用次数"""
         machine_code = self.get_machine_code()
@@ -369,6 +408,23 @@ class LicenseManager:
         self.license_data['usage_limit'] = self.RESET_LIMIT
         self.license_data['unlocked'] = True
         self.license_data['reset_time'] = datetime.now().isoformat()
+        self.save_license()
+        return True
+
+    def reset_with_code_v1_1(self, reset_code: str) -> bool:
+        machine_code = self.get_machine_code_v1_1()
+
+        if not self.verify_reset_code_v1_1(machine_code, reset_code):
+            return False
+
+        if not self.license_data:
+            self.load_license()
+
+        self.license_data['usage_count'] = 0
+        self.license_data['usage_limit'] = self.RESET_LIMIT
+        self.license_data['unlocked'] = True
+        self.license_data['reset_time'] = datetime.now().isoformat()
+        self.license_data['unlock_version'] = '1.1'
         self.save_license()
         return True
 
@@ -401,7 +457,7 @@ def reset_license(reset_code: str):
     """使用重置码重置授权"""
     manager = LicenseManager()
 
-    if manager.reset_with_code(reset_code):
+    if manager.reset_with_code(reset_code) or manager.reset_with_code_v1_1(reset_code):
         print("✓ 重置成功！使用次数已清零。")
         show_license_status()
     else:

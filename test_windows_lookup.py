@@ -2,7 +2,12 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-from wiz_export import WizExporter, Logger
+import pytest
+
+import license_manager as license_manager_module
+from license_manager import LicenseManager
+import key_generator_v1_1
+from wiz_export import WizExporter, Logger, parse_attachment_mode
 
 
 class DummyLogger:
@@ -22,15 +27,27 @@ class DummyLogger:
         pass
 
 
+def get_windows_sample_root() -> Path:
+    relative = Path('windows-data/wiz/Data/moringchen123@sina.com')
+    current = Path(__file__).resolve().parent
+
+    for base in [current, *current.parents]:
+        candidate = base / relative
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError(f'找不到测试样本目录: {relative}')
+
+
 def test_windows_flat_layout_is_detected_without_notes_dir():
-    root = Path('/Users/moringchen/workspace/ai/wizexport/windows-data/wiz/Data/moringchen123@sina.com')
+    root = get_windows_sample_root()
     exporter = WizExporter('moringchen123@sina.com', '/', root, DummyLogger())
 
     assert exporter._uses_flat_document_layout() is True
 
 
 def test_windows_note_lookup_finds_real_ziw_file():
-    root = Path('/Users/moringchen/workspace/ai/wizexport/windows-data/wiz/Data/moringchen123@sina.com')
+    root = get_windows_sample_root()
     exporter = WizExporter('moringchen123@sina.com', '/', root, DummyLogger())
 
     conn = sqlite3.connect(str(root / 'index.db'))
@@ -149,3 +166,218 @@ def test_convert_to_markdown_handles_utf16le_encoding(tmp_path, monkeypatch):
     content = md_file.read_text(encoding='utf-8')
     assert 'UTF16标题' in content
     assert 'UTF16内容' in content
+
+
+def test_machine_code_v1_0_keeps_legacy_format(monkeypatch):
+    manager = LicenseManager()
+    monkeypatch.setattr(manager, '_get_machine_fingerprint', lambda: 'abcdef0123456789fedcba9876543210')
+
+    machine_code = manager.get_machine_code()
+
+    assert machine_code == 'ABCD-EF01-2345-6789'
+
+
+def test_machine_code_v1_1_is_stable_within_same_day(monkeypatch):
+    manager = LicenseManager()
+    monkeypatch.setattr(manager, '_get_machine_fingerprint', lambda: 'abcdef0123456789fedcba9876543210')
+    monkeypatch.setattr(manager, '_get_machine_code_date_stamp', lambda now=None: '20260430', raising=False)
+
+    first = manager.get_machine_code_v1_1()
+    second = manager.get_machine_code_v1_1()
+
+    assert first == second
+    assert first.startswith('V11-')
+
+
+def test_machine_code_v1_1_changes_across_days(monkeypatch):
+    manager = LicenseManager()
+    monkeypatch.setattr(manager, '_get_machine_fingerprint', lambda: 'abcdef0123456789fedcba9876543210')
+
+    stamps = iter(['20260430', '20260501'])
+    monkeypatch.setattr(manager, '_get_machine_code_date_stamp', lambda now=None: next(stamps), raising=False)
+
+    first = manager.get_machine_code_v1_1()
+    second = manager.get_machine_code_v1_1()
+
+    assert first != second
+
+
+def test_reset_code_v1_1_round_trip(monkeypatch):
+    manager = LicenseManager()
+    monkeypatch.setattr(manager, 'ensure_private_key', lambda: 'secret-key-for-tests')
+    monkeypatch.setattr(manager, '_load_private_key', lambda: 'secret-key-for-tests')
+
+    machine_code = 'V11-AAAA-BBBB-CCCC-DDDD'
+    reset_code = manager.generate_reset_code_v1_1(machine_code)
+
+    assert manager.verify_reset_code_v1_1(machine_code, reset_code) is True
+
+
+def test_reset_code_v1_1_rejects_v1_0_code(monkeypatch):
+    manager = LicenseManager()
+    monkeypatch.setattr(manager, 'ensure_private_key', lambda: 'secret-key-for-tests')
+    monkeypatch.setattr(manager, '_load_private_key', lambda: 'secret-key-for-tests')
+
+    legacy_machine_code = 'AAAA-BBBB-CCCC-DDDD'
+    v1_1_reset_code = manager.generate_reset_code_v1_1('V11-AAAA-BBBB-CCCC-DDDD')
+
+    assert manager.verify_reset_code(legacy_machine_code, v1_1_reset_code) is False
+
+
+def test_reset_with_code_v1_1_uses_v1_1_machine_code(monkeypatch):
+    manager = LicenseManager()
+    manager.license_data = {'usage_count': 5, 'usage_limit': 0, 'unlocked': False}
+    monkeypatch.setattr(manager, 'get_machine_code_v1_1', lambda: 'V11-AAAA-BBBB-CCCC-DDDD', raising=False)
+    monkeypatch.setattr(
+        manager,
+        'verify_reset_code_v1_1',
+        lambda machine_code, reset_code: reset_code == 'valid-v11-code',
+        raising=False,
+    )
+    monkeypatch.setattr(manager, 'save_license', lambda: True)
+
+    assert manager.reset_with_code_v1_1('valid-v11-code') is True
+    assert manager.license_data['usage_count'] == 0
+    assert manager.license_data['usage_limit'] == manager.RESET_LIMIT
+    assert manager.license_data['unlocked'] is True
+
+
+def test_get_machine_code_for_display_uses_requested_version(monkeypatch):
+    manager = LicenseManager()
+    monkeypatch.setattr(manager, 'get_machine_code', lambda: 'AAAA-BBBB-CCCC-DDDD')
+    monkeypatch.setattr(manager, 'get_machine_code_v1_1', lambda: 'V11-AAAA-BBBB-CCCC-DDDD', raising=False)
+
+    assert manager.get_machine_code_for_display('1.0') == 'AAAA-BBBB-CCCC-DDDD'
+    assert manager.get_machine_code_for_display('1.1') == 'V11-AAAA-BBBB-CCCC-DDDD'
+
+
+def test_attachment_mode_shared_media_resolves_to_outer_media(tmp_path):
+    exporter = WizExporter('user@example.com', '/', tmp_path, DummyLogger(), attachment_mode='shared')
+    exporter.output_dir = tmp_path / 'wiz'
+    exporter.media_dir = exporter.output_dir / 'media'
+    note_dir = exporter.output_dir / '工作'
+    note_dir.mkdir(parents=True)
+
+    media_dir = exporter._get_attachment_target_dir(note_dir)
+
+    assert media_dir == exporter.output_dir / 'media' / '工作'
+
+
+def test_attachment_mode_per_note_resolves_to_note_media(tmp_path):
+    exporter = WizExporter('user@example.com', '/', tmp_path, DummyLogger(), attachment_mode='per_note')
+    exporter.output_dir = tmp_path / 'wiz'
+    exporter.media_dir = exporter.output_dir / 'media'
+    note_dir = exporter.output_dir / '工作'
+    note_dir.mkdir(parents=True)
+
+    media_dir = exporter._get_attachment_target_dir(note_dir)
+
+    assert media_dir == note_dir / 'media'
+
+
+def test_fix_image_paths_shared_mode_uses_outer_media(tmp_path):
+    exporter = WizExporter('user@example.com', '/', tmp_path, DummyLogger(), attachment_mode='shared')
+    exporter.output_dir = tmp_path / 'wiz'
+    exporter.media_dir = exporter.output_dir / 'media'
+    note_dir = exporter.output_dir / '工作'
+    note_dir.mkdir(parents=True)
+    md_file = note_dir / '周报.md'
+    md_file.write_text('![图](index_files/a.png)', encoding='utf-8')
+
+    exporter._fix_image_paths(md_file, note_dir)
+
+    assert md_file.read_text(encoding='utf-8') == '![图](../media/工作/a.png)'
+
+
+def test_fix_image_paths_shared_mode_uses_depth_aware_outer_media(tmp_path):
+    exporter = WizExporter('user@example.com', '/', tmp_path, DummyLogger(), attachment_mode='shared')
+    exporter.output_dir = tmp_path / 'wiz'
+    exporter.media_dir = exporter.output_dir / 'media'
+    note_dir = exporter.output_dir / 'My Journals' / '2013'
+    note_dir.mkdir(parents=True)
+    md_file = note_dir / 'note.md'
+    md_file.write_text('![图](index_files/a.png)', encoding='utf-8')
+
+    exporter._fix_image_paths(md_file, note_dir)
+
+    assert md_file.read_text(encoding='utf-8') == '![图](../../media/My Journals/2013/a.png)'
+
+
+def test_fix_image_paths_per_note_mode_uses_local_media(tmp_path):
+    exporter = WizExporter('user@example.com', '/', tmp_path, DummyLogger(), attachment_mode='per_note')
+    exporter.output_dir = tmp_path / 'wiz'
+    exporter.media_dir = exporter.output_dir / 'media'
+    note_dir = exporter.output_dir / '工作'
+    note_dir.mkdir(parents=True)
+    md_file = note_dir / '周报.md'
+    md_file.write_text('![图](index_files/a.png)', encoding='utf-8')
+
+    exporter._fix_image_paths(md_file, note_dir)
+
+    assert md_file.read_text(encoding='utf-8') == '![图](media/a.png)'
+
+
+def test_process_attachments_shared_mode_copies_into_outer_media(tmp_path):
+    exporter = WizExporter('user@example.com', '/', tmp_path, DummyLogger(), attachment_mode='shared')
+    exporter.output_dir = tmp_path / 'wiz'
+    exporter.media_dir = exporter.output_dir / 'media'
+    exporter.output_dir.mkdir()
+    exporter.media_dir.mkdir()
+    note_dir = exporter.output_dir / '工作'
+    note_dir.mkdir()
+    index_files_dir = tmp_path / 'index_files'
+    index_files_dir.mkdir()
+    (index_files_dir / 'a.png').write_text('img', encoding='utf-8')
+
+    exporter._process_attachments(index_files_dir, note_dir, '周报')
+
+    assert (exporter.output_dir / 'media' / '工作' / 'a.png').exists()
+
+
+def test_process_attachments_per_note_mode_copies_into_note_media(tmp_path):
+    exporter = WizExporter('user@example.com', '/', tmp_path, DummyLogger(), attachment_mode='per_note')
+    exporter.output_dir = tmp_path / 'wiz'
+    exporter.media_dir = exporter.output_dir / 'media'
+    exporter.output_dir.mkdir()
+    note_dir = exporter.output_dir / '工作'
+    note_dir.mkdir(parents=True)
+    index_files_dir = tmp_path / 'index_files'
+    index_files_dir.mkdir()
+    (index_files_dir / 'a.png').write_text('img', encoding='utf-8')
+
+    exporter._process_attachments(index_files_dir, note_dir, '周报')
+
+    assert (note_dir / 'media' / 'a.png').exists()
+
+
+def test_parse_attachment_mode_defaults_to_shared():
+    exporter_mode = parse_attachment_mode('')
+    explicit_shared_mode = parse_attachment_mode('1')
+    per_note_mode = parse_attachment_mode('2')
+
+    assert exporter_mode == 'shared'
+    assert explicit_shared_mode == 'shared'
+    assert per_note_mode == 'per_note'
+
+
+def test_reset_license_accepts_v1_1_code(monkeypatch, capsys):
+    monkeypatch.setattr(LicenseManager, 'reset_with_code', lambda self, code: False)
+    monkeypatch.setattr(LicenseManager, 'reset_with_code_v1_1', lambda self, code: code == 'valid-v11-code')
+    monkeypatch.setattr(license_manager_module, 'show_license_status', lambda: None)
+
+    license_manager_module.reset_license('valid-v11-code')
+
+    output = capsys.readouterr().out
+    assert '✓ 重置成功' in output
+
+
+
+def test_key_generator_v1_1_rejects_invalid_machine_code(monkeypatch, capsys):
+    monkeypatch.setattr(key_generator_v1_1.sys, 'argv', ['key_generator_v1_1.py', 'AAAA-BBBB-CCCC-DDDD'])
+
+    with pytest.raises(SystemExit) as exc_info:
+        key_generator_v1_1.main()
+
+    assert exc_info.value.code == 1
+    output = capsys.readouterr().out
+    assert 'V11-' in output

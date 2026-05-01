@@ -4,9 +4,11 @@ from pathlib import Path
 
 import pytest
 
-import license_manager as license_manager_module
-from license_manager import LicenseManager
 import key_generator_v1_1
+import license_manager as license_manager_module
+import wiz_export as wiz_export_module
+from build import Builder
+from license_manager import LicenseManager
 from wiz_export import WizExporter, Logger, parse_attachment_mode
 
 
@@ -381,3 +383,89 @@ def test_key_generator_v1_1_rejects_invalid_machine_code(monkeypatch, capsys):
     assert exc_info.value.code == 1
     output = capsys.readouterr().out
     assert 'V11-' in output
+
+
+
+def test_create_directory_structure_per_note_does_not_create_top_level_media(tmp_path):
+    exporter = WizExporter('user@example.com', '/', tmp_path, DummyLogger(), attachment_mode='per_note')
+    exporter.output_dir = tmp_path / 'wiz'
+    exporter.tmp_dir = tmp_path / 'wiz_tmp'
+    exporter.media_dir = exporter.output_dir / 'media'
+
+    exporter.create_directory_structure([{'path': '/', 'name': 'root'}])
+
+    assert exporter.output_dir.exists()
+    assert exporter.tmp_dir.exists()
+    assert not exporter.media_dir.exists()
+
+
+
+def test_builder_macos_launcher_preserves_cwd_and_shows_wait_message():
+    launcher = Builder()._get_macos_launcher_content()
+
+    assert '工具启动中，请稍候' in launcher
+    assert 'cd "$(dirname "$0")"' not in launcher
+    assert 'SCRIPT_DIR=' in launcher
+    assert '"$SCRIPT_DIR/WizNote导出工具"' in launcher
+
+
+
+def test_discard_pending_stdin_input_flushes_macos_tty():
+    class FakeStdin:
+        def isatty(self):
+            return True
+
+        def fileno(self):
+            return 7
+
+    calls = {}
+
+    def fake_tcflush(fd, mode):
+        calls['fd'] = fd
+        calls['mode'] = mode
+
+    flushed = wiz_export_module.discard_pending_stdin_input(
+        platform_name='darwin',
+        stdin=FakeStdin(),
+        tcflush_fn=fake_tcflush,
+        tciflush=123,
+    )
+
+    assert flushed is True
+    assert calls == {'fd': 7, 'mode': 123}
+
+
+
+def test_main_discards_pending_input_before_wiz_home_prompt(monkeypatch):
+    events = []
+
+    monkeypatch.setattr(wiz_export_module, 'check_license', lambda: (True, 3))
+    monkeypatch.setattr(wiz_export_module, 'get_default_wiz_home', lambda: Path('/tmp/.wiznote'))
+    monkeypatch.setattr(wiz_export_module, 'get_default_wiz_home_display', lambda: '~/.wiznote')
+    monkeypatch.setattr(wiz_export_module, 'get_os_name', lambda: 'macOS')
+    monkeypatch.setattr(wiz_export_module, 'discard_pending_stdin_input', lambda: events.append('discard'))
+
+    class DummyRuntimeLogger:
+        def info(self, msg):
+            pass
+        def error(self, msg):
+            pass
+        def warning(self, msg):
+            pass
+        def debug(self, msg):
+            pass
+        def exception(self, msg):
+            pass
+
+    monkeypatch.setattr(wiz_export_module, 'Logger', lambda log_dir: DummyRuntimeLogger())
+
+    def fake_input(prompt=''):
+        events.append(prompt)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr('builtins.input', fake_input)
+
+    wiz_export_module.main()
+
+    assert events[0] == 'discard'
+    assert '请输入 WizNote 数据目录' in events[1]

@@ -19,6 +19,24 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 
+
+def discard_pending_stdin_input(platform_name: Optional[str] = None, stdin=None, tcflush_fn=None, tciflush=None) -> bool:
+    current_platform = platform_name or sys.platform
+    input_stream = stdin or sys.stdin
+
+    if current_platform != 'darwin' or not hasattr(input_stream, 'isatty') or not input_stream.isatty():
+        return False
+
+    try:
+        import termios
+
+        flush = tcflush_fn or termios.tcflush
+        flush_flag = tciflush if tciflush is not None else termios.TCIFLUSH
+        flush(input_stream.fileno(), flush_flag)
+        return True
+    except Exception:
+        return False
+
 # 导入授权管理模块
 try:
     from license_manager import LicenseManager
@@ -391,7 +409,8 @@ class WizExporter:
         # 创建基础目录
         self.output_dir.mkdir(exist_ok=True)
         self.tmp_dir.mkdir(exist_ok=True)
-        self.media_dir.mkdir(exist_ok=True)
+        if self.attachment_mode == 'shared':
+            self.media_dir.mkdir(exist_ok=True)
 
         # 为每个目录创建对应的路径
         for folder in folders:
@@ -1098,6 +1117,7 @@ def main():
         else:
             print("(可通过 WizNote 菜单-选项-数据存储 查看或修改)")
 
+        discard_pending_stdin_input()
         wiz_home_input = input(f"请输入 WizNote 数据目录 [直接回车使用默认]: ").strip()
         if wiz_home_input:
             wiz_home = Path(wiz_home_input)

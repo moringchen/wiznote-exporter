@@ -127,16 +127,20 @@ class Builder:
             print(f"\n✗ 构建失败: {e}\n")
             return False
 
+    def _get_macos_launcher_content(self) -> str:
+        return """#!/bin/bash
+# WizNote 导出工具启动脚本
+SCRIPT_DIR="$(dirname "$0")"
+SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
+echo "工具启动中，请稍候，出现输入提示后再开始输入..."
+"$SCRIPT_DIR/WizNote导出工具"
+read -p "按回车键退出..."
+"""
+
     def _create_macos_launcher(self):
         """创建 macOS 启动脚本"""
         launcher_path = self.dist_dir / "macos" / "启动.command"
-        content = """#!/bin/bash
-# WizNote 导出工具启动脚本
-cd "$(dirname "$0")"
-./WizNote导出工具
-read -p "按回车键退出..."
-"""
-        launcher_path.write_text(content, encoding='utf-8')
+        launcher_path.write_text(self._get_macos_launcher_content(), encoding='utf-8')
         launcher_path.chmod(0o755)
         print(f"  启动脚本已创建: {launcher_path}")
 
